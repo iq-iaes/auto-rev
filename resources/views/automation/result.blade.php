@@ -24,7 +24,6 @@
                     </div>
                 </div>
 
-                <!-- Job Summary -->
                 <div class="bg-gray-50 rounded-lg p-4 mb-6">
                     <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
                         <div>
@@ -48,7 +47,6 @@
                     </div>
                 </div>
 
-                <!-- Generated URLs -->
                 <div class="mb-6">
                     <div class="flex justify-between items-center mb-3">
                         <h3 class="text-lg font-medium text-gray-900">URL yang Digenerate</h3>
@@ -70,29 +68,17 @@
                     </div>
                 </div>
 
-                <!-- Action Buttons -->
                 <div class="flex flex-wrap justify-center gap-3 mt-6">
-                    <!-- Tombol Buka Semua URL -->
-                    <button onclick="openAllUrls()" 
-                            class="inline-flex items-center px-4 py-2 bg-red-600 text-white rounded">
+                    <button id="btn-execute" onclick="openSequentially(this)" 
+                            class="inline-flex items-center px-4 py-2 bg-red-600 text-white rounded font-medium transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed">
                         <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
                         </svg>
-                        Buka Semua URL ({{ count($generatedUrls) }})
+                        Eksekusi Semua URL ({{ count($generatedUrls) }})
                     </button>
 
-                    <!-- Tombol Buka Semua dengan Delay -->
-                    <button onclick="openAllUrlsWithDelay()" 
-                            class="inline-flex items-center px-4 py-2 bg-gray-500 text-white rounded">
-                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                        </svg>
-                        Buka Bertahap (1 detik interval)
-                    </button>
-
-                    <!-- Tombol Salin Semua URL -->
-                    <button onclick="copyAllUrls()" 
-                            class="inline-flex items-center px-4 py-2 bg-red-600 text-white rounded">
+                    <button id="btn-copy" onclick="copyAllUrls()" 
+                            class="inline-flex items-center px-4 py-2 bg-red-600 text-white rounded font-medium transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed">
                         <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"/>
                         </svg>
@@ -100,7 +86,16 @@
                     </button>
                 </div>
 
-                <!-- Notification Area -->
+                <div id="progressContainer" class="mt-6 max-w-xl mx-auto hidden">
+                    <div class="flex justify-between mb-1">
+                        <span id="progressText" class="text-sm font-medium text-indigo-700">Memproses 0 dari {{ count($generatedUrls) }} URL...</span>
+                        <span id="progressPercent" class="text-sm font-medium text-indigo-700">0%</span>
+                    </div>
+                    <div class="w-full bg-gray-200 rounded-full h-2.5">
+                        <div id="progressBar" class="bg-indigo-600 h-2.5 rounded-full transition-all duration-300" style="width: 0%"></div>
+                    </div>
+                </div>
+
                 <div id="notification" class="mt-4 hidden">
                     <div class="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded relative" role="alert">
                         <span class="block sm:inline" id="notificationMessage"></span>
@@ -117,116 +112,198 @@
     const urls = {!! json_encode($generatedUrls) !!};
     let isOpening = false;
 
+    /**
+     * Menampilkan notifikasi sukses atau error di UI
+     */
     function showNotification(message, isError = false) {
         const notification = document.getElementById('notification');
         const messageEl = document.getElementById('notificationMessage');
         
+        if (!notification || !messageEl) return;
+
         notification.classList.remove('hidden');
         messageEl.textContent = message;
         
-        if (isError) {
-            notification.querySelector('div').className = 'bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative';
-        } else {
-            notification.querySelector('div').className = 'bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded relative';
+        const alertBox = notification.querySelector('div');
+        if (alertBox) {
+            if (isError) {
+                alertBox.className = `bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative`;
+            } else {
+                alertBox.className = `bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded relative`;
+            }
         }
         
-        // Auto hide after 5 seconds
+        // Sembunyikan otomatis setelah 5 detik
         setTimeout(() => {
             notification.classList.add('hidden');
         }, 5000);
     }
 
-    function openAllUrls() {
+    /**
+     * Fungsi Helper utilitas untuk memberikan jeda waktu (delay) eksesuksi 
+     */
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    /**
+     * Fungsi untuk mendeteksi apakah halaman pada tab target sudah selesai loading.
+     * Menggunakan mekanisme try-catch sebagai proteksi apabila domain tujuan memicu Same-Origin Policy (Cross-Origin limitation).
+     */
+    function waitForLoad(tab) {
+        return new Promise((resolve) => {
+            const interval = setInterval(() => {
+                try {
+                    // Jika tab ditutup paksa oleh pengguna di tengah jalan
+                    if (!tab || tab.closed) {
+                        clearInterval(interval);
+                        resolve();
+                        return;
+                    }
+                    
+                    // Cek jika status dokumen sudah complete (Hanya bekerja jika Same-Origin)
+                    if (tab.document && tab.document.readyState === 'complete') {
+                        clearInterval(interval);
+                        resolve();
+                    }
+                } catch (error) {
+                    // Terjadi Cross-Origin Security Error (karena perbedaan sub-domain / origin OJS).
+                    // Browser memblokir pembacaan properti dokumen, berikan fallback aman sebesar 3 detik untuk loading.
+                    clearInterval(interval);
+                    setTimeout(resolve, 3000);
+                }
+            }, 500);
+        });
+    }
+
+    /**
+     * Mengeksekusi seluruh daftar URL secara berurutan pada SATU tab yang sama.
+     */
+    async function openSequentially(button) {
         if (isOpening) return;
         if (urls.length === 0) {
-            showNotification('Tidak ada URL untuk dibuka', true);
+            showNotification(`Tidak ada URL untuk dieksekusi`, true);
             return;
         }
 
         isOpening = true;
-        const btn = event.target.closest('button');
-        const originalText = btn.innerHTML;
-        
-        btn.innerHTML = `
-            <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            Membuka ${urls.length} URL...
-        `;
-        btn.disabled = true;
 
-        // Buka semua URL dengan delay kecil untuk menghindari block popup
-        urls.forEach((url, index) => {
-            setTimeout(() => {
-                window.open(url, '_blank');
-            }, index * 300);
-        });
+        // Ambil elemen UI
+        const btnCopy = document.getElementById('btn-copy');
+        const progressContainer = document.getElementById('progressContainer');
+        const progressText = document.getElementById('progressText');
+        const progressPercent = document.getElementById('progressPercent');
+        const progressBar = document.getElementById('progressBar');
 
-        setTimeout(() => {
-            btn.innerHTML = originalText;
-            btn.disabled = false;
+        // Simpan konten asli tombol utama
+        const originalButtonHtml = button.innerHTML;
+
+        // Nonaktifkan tombol selama proses berlangsung
+        button.disabled = true;
+        if (btnCopy) btnCopy.disabled = true;
+
+        // Tampilkan container progress bar
+        if (progressContainer) progressContainer.classList.remove('hidden');
+
+        // Buka tepat 1 tab kosong pertama untuk digunakan selama proses berantai
+        let executionTab = window.open('about:blank', 'ojs_execution_tab');
+
+        if (!executionTab) {
+            showNotification(`Gagal membuka tab baru. Mohon izinkan izin Pop-up di browser Anda.`, true);
+            button.disabled = false;
+            if (btnCopy) btnCopy.disabled = false;
+            if (progressContainer) progressContainer.classList.add('hidden');
             isOpening = false;
-            showNotification(`Berhasil membuka ${urls.length} URL`);
-        }, urls.length * 300 + 1000);
-    }
-
-    function openAllUrlsWithDelay() {
-        if (isOpening) return;
-        if (urls.length === 0) {
-            showNotification('Tidak ada URL untuk dibuka', true);
             return;
         }
 
-        isOpening = true;
-        const btn = event.target.closest('button');
-        const originalText = btn.innerHTML;
-        
-        btn.innerHTML = `
-            <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            Membuka ${urls.length} URL (1 detik interval)...
-        `;
-        btn.disabled = true;
+        try {
+            for (let i = 0; i < urls.length; i++) {
+                const currentUrl = urls[i];
+                const currentIndex = i + 1;
 
-        // Buka semua URL dengan interval 1 detik
-        urls.forEach((url, index) => {
-            setTimeout(() => {
-                window.open(url, '_blank');
-            }, (index + 1) * 1000);
-        });
+                // Hitung persentase progress saat ini
+                const percentage = Math.round((currentIndex / urls.length) * 100);
 
-        setTimeout(() => {
-            btn.innerHTML = originalText;
-            btn.disabled = false;
+                // Update text & progress bar di UI
+                if (progressText) progressText.textContent = `Memproses ${currentIndex} dari ${urls.length} URL...`;
+                if (progressPercent) progressPercent.textContent = `${percentage}%`;
+                if (progressBar) progressBar.style.width = `${percentage}%`;
+
+                // Update animasi loading di tombol utama
+                button.innerHTML = `
+                    <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Memproses URL #${currentIndex}...
+                `;
+
+                // Jika user tidak sengaja menutup tab eksekusi di tengah proses, buka kembali tab baru
+                if (executionTab.closed) {
+                    executionTab = window.open('about:blank', 'ojs_execution_tab');
+                }
+
+                // Arahkan tab ke URL target saat ini
+                executionTab.location.href = currentUrl;
+
+                // Tahap 1: Tunggu dokumen selesai loading
+                await waitForLoad(executionTab);
+
+                // Tahap 2: Tambahkan delay aman 5 detik agar server OJS benar-benar tuntas memproses backend data
+                await sleep(5000);
+            }
+
+            // Semua URL sukses diproses, tutup tab eksekusi
+            if (executionTab && !executionTab.closed) {
+                executionTab.close();
+            }
+
+            showNotification(`Seluruh ${urls.length} URL berhasil diproses secara berurutan.`);
+
+        } catch (error) {
+            console.error(`Terjadi kegagalan sistem saat eksekusi:`, error);
+            showNotification(`Terjadi kesalahan saat memproses rangkaian URL.`, true);
+        } finally {
+            // Kembalikan keadaan tombol seperti semula
+            button.innerHTML = originalButtonHtml;
+            button.disabled = false;
+            if (btnCopy) btnCopy.disabled = false;
             isOpening = false;
-            showNotification(`Berhasil membuka ${urls.length} URL dengan interval 1 detik`);
-        }, urls.length * 1000 + 2000);
+
+            // Sembunyikan progress area setelah 3 detik jeda kosmetik
+            setTimeout(() => {
+                if (progressContainer) progressContainer.classList.add('hidden');
+                if (progressBar) progressBar.style.width = `0%`;
+            }, 3000);
+        }
     }
 
+    /**
+     * Menyalin seluruh URL yang digenerate ke papan klip (clipboard)
+     */
     function copyAllUrls() {
         if (urls.length === 0) {
-            showNotification('Tidak ada URL untuk disalin', true);
+            showNotification(`Tidak ada URL untuk disalin`, true);
             return;
         }
 
         const text = urls.join('\n');
         
         if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(text).then(() => {
-                showNotification(`Berhasil menyalin ${urls.length} URL ke clipboard`);
-            }).catch(() => {
-                // Fallback method
-                copyToClipboardFallback(text);
-            });
+            navigator.clipboard.writeText(text)
+                .then(() => {
+                    showNotification(`Berhasil menyalin ${urls.length} URL ke clipboard`);
+                })
+                .catch(() => {
+                    copyToClipboardFallback(text);
+                });
         } else {
-            // Fallback method
             copyToClipboardFallback(text);
         }
     }
 
+    /**
+     * Fallback sistem salin clipboard jika protokol navigator.clipboard diblokir browser
+     */
     function copyToClipboardFallback(text) {
         const textarea = document.createElement('textarea');
         textarea.value = text;
@@ -239,23 +316,26 @@
             document.execCommand('copy');
             showNotification(`Berhasil menyalin ${urls.length} URL ke clipboard`);
         } catch (err) {
-            showNotification('Gagal menyalin URL ke clipboard', true);
+            showNotification(`Gagal menyalin URL ke clipboard`, true);
         }
         
         document.body.removeChild(textarea);
     }
 
-    // Keyboard shortcut: Ctrl+Shift+O untuk membuka semua URL
+    // Shortcut Keyboard Global: Ctrl+Shift+O untuk trigger eksekusi sekuensial aman
     document.addEventListener('keydown', function(e) {
-        if (e.ctrlKey && e.shiftKey && e.key === 'O') {
+        if (e.ctrlKey && e.shiftKey && (e.key === 'O' || e.key === 'o')) {
             e.preventDefault();
-            openAllUrls();
+            const btnExecute = document.getElementById('btn-execute');
+            if (btnExecute && !btnExecute.disabled) {
+                openSequentially(btnExecute);
+            }
         }
     });
 
-    // Menampilkan total URL di console
+    // Logging informasi awal list data URL ke console devtools secara rapi
     console.log(`Total URL yang digenerate: ${urls.length}`);
-    console.log('URL List:', urls);
+    console.log(`URL List:`, urls);
 </script>
 @endpush
 @endsection
